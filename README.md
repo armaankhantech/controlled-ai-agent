@@ -1,6 +1,6 @@
 # 🤖 Controlled AI Agent
 
-> **An AI agent that can think, choose tools, execute actions, loop when necessary — and stop when it reaches a safety boundary.**
+> **An AI agent that can think, choose tools, execute actions, loop when necessary  and stop when it reaches a safety boundary.**
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=for-the-badge\&logo=python)
 ![Ollama](https://img.shields.io/badge/Ollama-Local%20LLM-black?style=for-the-badge)
