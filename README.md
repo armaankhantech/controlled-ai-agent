@@ -1,13 +1,13 @@
 # 🤖 Controlled AI Agent
 
-> **An AI agent that can think, choose tools, execute actions, loop when necessary  and stop when it reaches a safety boundary.**
+> **An AI agent that can think, choose tools, execute actions, handle failures, retry safely, and stop when it reaches a safety boundary.**
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=for-the-badge\&logo=python)
 ![Ollama](https://img.shields.io/badge/Ollama-Local%20LLM-black?style=for-the-badge)
 ![Llama](https://img.shields.io/badge/Llama%203.2-3B-purple?style=for-the-badge)
 ![Agent Loop](https://img.shields.io/badge/Agent-Loop-orange?style=for-the-badge)
 ![Guardrails](https://img.shields.io/badge/AI-Guardrails-red?style=for-the-badge)
-![Human Approval](https://img.shields.io/badge/Human-In--The--Loop-green?style=for-the-badge)
+![Reliability](https://img.shields.io/badge/Reliability-Tested-green?style=for-the-badge)
 
 ---
 
@@ -15,20 +15,26 @@
 
 This project is a **controlled AI agent built from scratch with Python and Ollama**, without using LangChain, LangGraph, CrewAI, AutoGen, or another agent framework.
 
+The goal is to understand what actually happens underneath an AI agent framework.
+
 The agent can:
 
 * 🧠 Decide which tool it needs
 * 🔧 Call registered Python tools
 * 🔄 Execute multiple tool calls in an agent loop
-* 🛡️ Validate tool access
-* 🚦 Enforce a tool allowlist
-* 👤 Request human approval for high-risk actions
-* 🚫 Block unauthorized tools
-* ⏱️ Stop after a maximum number of iterations
 * 📦 Feed tool results back into the LLM
+* 🛡️ Validate tool arguments
+* 🚦 Enforce a tool allowlist
+* 🔁 Retry transient failures
+* ⏱️ Handle tool timeouts
+* 🔐 Prevent duplicate actions with idempotency
+* 🚫 Handle permanent failures safely
+* 🤖 Handle LLM service failures
+* 🛑 Stop after a maximum number of agent steps
+* 👤 Escalate failed actions for human review
 * 💬 Generate a final natural-language response
 
-The goal is simple:
+The core idea is:
 
 > **Give an LLM enough autonomy to be useful — without giving it unlimited control.**
 
@@ -85,7 +91,7 @@ ANOTHER TOOL?
   └── NO → FINAL ANSWER
 ```
 
-And a **controlled agent** adds safety boundaries around that loop.
+A controlled agent adds reliability and safety boundaries around that loop.
 
 ---
 
@@ -110,22 +116,21 @@ flowchart TD
 
     G --> H["✅ INPUT VALIDATION"]
 
-    H --> I{"⚠️ High-Risk Action?"}
+    H --> I{"⚠️ Permission / Risk Check?"}
 
-    I -->|No| J["⚙️ EXECUTE TOOL"]
+    I -->|Allowed| J["⚙️ EXECUTE TOOL"]
 
-    I -->|Yes| K["👤 HUMAN APPROVAL"]
-
-    K -->|No| L["❌ ACTION DENIED"]
-
-    K -->|Yes| J
+    I -->|Requires Review| K["👤 HUMAN REVIEW"]
 
     J --> M["📦 TOOL RESULT"]
 
     M --> B
 
     F --> B
-    L --> B
+
+    K --> B
+
+    Z
 
     style A fill:#111827,color:#fff
     style B fill:#4f46e5,color:#fff
@@ -147,9 +152,13 @@ The agent continuously follows this decision cycle:
 flowchart LR
 
     A["🧠 LLM"] --> B["🔧 Tool Call"]
+
     B --> C["🛡️ Validate"]
+
     C --> D["⚙️ Execute"]
+
     D --> E["📦 Result"]
+
     E --> A
 
     A --> F["💬 Final Answer"]
@@ -168,11 +177,15 @@ The important difference is that the LLM can decide:
 
 That is what creates the agent loop.
 
+But the LLM does **not** directly execute Python functions.
+
+The application controls execution.
+
 ---
 
 # 🛡️ Safety Architecture
 
-The LLM is **not trusted to directly modify the system**.
+The LLM is **not trusted to directly control the backend**.
 
 Instead:
 
@@ -184,7 +197,7 @@ Instead:
                   │
                   ▼
           ┌───────────────┐
-          │  ALLOWLIST    │
+          │   ALLOWLIST   │
           └───────┬───────┘
                   │
                   ▼
@@ -193,39 +206,44 @@ Instead:
           └───────┬───────┘
                   │
                   ▼
-         ┌─────────────────┐
-         │ PERMISSION CHECK│
-         └────────┬────────┘
-                  │
-        ┌─────────┴─────────┐
-        ▼                   ▼
-      SAFE               HIGH-RISK
-        │                   │
-        │             HUMAN APPROVAL
-        │                   │
-        │              ┌────┴────┐
-        │             YES        NO
-        │              │          │
-        └───────┬──────┘          ▼
-                ▼               DENIED
+          ┌─────────────────┐
+          │ PERMISSION CHECK│
+          └────────┬────────┘
+                   │
+             ┌─────┴─────┐
+             ▼           ▼
+           ALLOW       REVIEW
+             │           │
+             │      HUMAN REVIEW
+             │           │
+             │      ┌────┴────┐
+             │      ▼         ▼
+             │    APPROVE    REJECT
+             │      │         │
+             └──┬───┘         ▼
+                ▼           FALLBACK
              EXECUTE
                 │
                 ▼
            TOOL RESULT
+                │
+                ▼
+               LLM
 ```
 
 This creates a critical separation:
 
-> **The LLM decides what it wants to do.
-> The application decides whether it is allowed to do it.**
+> **The LLM decides what it wants to do.**
+>
+> **The application decides whether it is allowed to do it.**
 
 ---
 
 # 🔧 Available Tools
 
-The current implementation contains three core tools.
+The project uses registered Python functions as tools.
 
-### 📦 `get_order_status()`
+## 📦 `get_order_status()`
 
 Retrieves order information.
 
@@ -237,14 +255,14 @@ Example:
 
 ```text
 ORD-1002
-     ↓
+    ↓
 status: shipped
 delivery: 2026-09-23
 ```
 
 ---
 
-### 👤 `get_customer_details()`
+## 👤 `get_customer_details()`
 
 Retrieves customer information.
 
@@ -256,16 +274,15 @@ Example:
 
 ```text
 C101
- ↓
-Rahul Sharma
-rahul@example.com
+  ↓
+Customer information
 ```
 
 ---
 
-### 🎫 `create_support_ticket()`
+## 🎫 `create_support_ticket()`
 
-Creates a support ticket after validating the customer and issue.
+Creates a support ticket after validating the required arguments.
 
 ```python
 create_support_ticket(
@@ -279,9 +296,7 @@ Example:
 ```text
 Customer: C101
 Issue: Order delayed
-
         ↓
-
 TICKET-1001
 Status: open
 ```
@@ -303,7 +318,7 @@ elif tool_name == "create_support_ticket":
     ...
 ```
 
-The application uses a registry:
+The application uses a tool registry:
 
 ```python
 tool_registry = {
@@ -319,7 +334,7 @@ The agent can then dynamically find the requested function:
 tool_function = tool_registry.get(tool_name)
 ```
 
-This makes adding new tools much cleaner.
+This makes adding and managing tools cleaner.
 
 ---
 
@@ -327,7 +342,7 @@ This makes adding new tools much cleaner.
 
 The agent does not automatically get permission to execute every function.
 
-Only explicitly approved tools are allowed:
+Only explicitly approved tools can be called.
 
 ```python
 allowed_tools = {
@@ -337,7 +352,7 @@ allowed_tools = {
 }
 ```
 
-If the model requests something outside the allowlist:
+If the model requests an unauthorized tool:
 
 ```text
 LLM
@@ -353,90 +368,380 @@ The LLM cannot bypass this application-level restriction.
 
 ---
 
-# 👤 Human-in-the-Loop
+# 👤 Human Review / Fallback
 
-Not every action should be fully autonomous.
+Automation should not assume that every failure can be solved automatically.
 
-The project demonstrates a simple approval boundary for high-risk actions.
+When a tool fails in a way that cannot safely be recovered, the system can return a structured human-review response.
 
 Example:
 
 ```text
-AI wants to execute:
-
-delete_customer
-customer_id = C101
-
-Do you approve?
-
-yes / no
+Tool execution fails
+        ↓
+Fallback handler
+        ↓
+TOOL_FAILED
+        ↓
+human_review_required
 ```
 
-### If approved:
+Example result:
 
-```text
-Human
-  ↓
-YES
-  ↓
-Tool executes
-  ↓
-Result
-  ↓
-LLM
+```python
+{
+    "error": "TOOL_FAILED",
+    "status": "human_review_required",
+    "tool": "create_support_ticket",
+    "message": "The requested action could not be completed automatically. "
+               "The failure has been recorded for human review."
+}
 ```
 
-### If rejected:
-
-```text
-Human
-  ↓
-NO
-  ↓
-ACTION DENIED
-  ↓
-LLM
-```
-
-This creates a practical **human-in-the-loop** safety mechanism.
+This prevents the agent from pretending that an action succeeded when it did not.
 
 ---
 
-# ⏱️ Maximum Iteration Protection
+# ⏱️ Maximum Step Protection
 
-Agents can potentially keep calling tools repeatedly.
+Agents can potentially continue calling tools indefinitely.
 
-To prevent uncontrolled loops:
+To prevent runaway loops, the agent has a maximum step limit.
+
+The current implementation uses:
 
 ```python
-MAX_STEPS = 5
+MAX_STEPS = 3
 ```
 
-The agent loop is bounded:
+The agent therefore follows:
 
 ```text
 STEP 1
- ↓
+  ↓
 STEP 2
- ↓
+  ↓
 STEP 3
- ↓
-STEP 4
- ↓
-STEP 5
- ↓
+  ↓
 STOP
 ```
 
-If the maximum number of steps is reached:
+When the limit is reached:
 
 ```text
-=== AGENT STOPPED ===
-
-The agent reached the maximum limit.
+MAX_STEPS_REACHED
 ```
 
-This prevents a runaway tool-calling loop.
+The system stops safely instead of allowing an uncontrolled agent loop.
+
+---
+
+# 🔐 Reliability Layer
+
+The project does more than demonstrate successful tool calling.
+
+It also tests what happens when things go wrong.
+
+The reliability layer covers:
+
+```text
+LLM
+ │
+ ▼
+Tool Selection
+ │
+ ▼
+Argument Validation
+ │
+ ▼
+Tool Execution
+ │
+ ├── Success
+ │
+ ├── Validation Failure
+ │
+ ├── Permanent Failure
+ │
+ ├── Timeout
+ │
+ ├── Transient Failure
+ │
+ ├── Duplicate Request
+ │
+ └── External Failure
+       │
+       ▼
+   Retry / Fallback
+       │
+       ▼
+ Human Review
+```
+
+---
+
+# 🧪 Day 55 — Reliability Test Suite
+
+The project includes **8 reliability tests**.
+
+```text
+============================================================
+DAY 55 — RELIABILITY TEST SUITE
+============================================================
+```
+
+## Test 1 — Invalid Argument
+
+Tests whether required tool arguments are validated.
+
+Example:
+
+```text
+create_support_ticket()
+        ↓
+customer_id missing
+        ↓
+VALIDATION ERROR
+```
+
+Result:
+
+```text
+customer_id is required.
+```
+
+The system correctly prevents invalid tool execution.
+
+---
+
+## Test 2 — Permanent Failure
+
+Tests an order that does not exist.
+
+```text
+ORD-999999
+      ↓
+ORDER NOT FOUND
+      ↓
+PERMANENT ERROR
+```
+
+Result:
+
+```text
+Order 'ORD-999999' does not exist.
+```
+
+The system does not retry an error that cannot be fixed through retrying.
+
+---
+
+## Test 3 — Tool Timeout
+
+Simulates a tool that takes too long.
+
+The system attempts the operation repeatedly:
+
+```text
+Attempt 1
+   ↓
+Retry after 1 second
+
+Attempt 2
+   ↓
+Retry after 2 seconds
+
+Attempt 3
+   ↓
+Retry after 4 seconds
+
+Attempt 4
+   ↓
+Retry limit reached
+```
+
+Result:
+
+```text
+TIMEOUT ERROR CAUGHT:
+Tool 'simulate_timeout' exceeded 5 seconds.
+```
+
+This demonstrates bounded timeout handling.
+
+---
+
+## Test 4 — Transient Failure
+
+Simulates a temporary external service failure.
+
+```text
+Attempt 1
+   ↓
+Temporary failure
+   ↓
+Retry
+
+Attempt 2
+   ↓
+Temporary failure
+   ↓
+Retry
+
+Attempt 3
+   ↓
+SUCCESS
+```
+
+Result:
+
+```python
+{
+    "status": "success",
+    "message": "Temporary failure recovered."
+}
+```
+
+This demonstrates retry behavior for recoverable failures.
+
+---
+
+## Test 5 — Idempotency
+
+Tests whether the same request can accidentally create duplicate actions.
+
+The same support-ticket request is submitted twice.
+
+```text
+FIRST REQUEST
+      ↓
+TICKET-1002 CREATED
+
+SECOND IDENTICAL REQUEST
+      ↓
+DUPLICATE DETECTED
+      ↓
+RETURN EXISTING RESULT
+```
+
+Both requests return:
+
+```text
+TICKET-1002
+```
+
+Instead of creating another ticket.
+
+This is important for real-world automation where network retries or duplicate requests can happen.
+
+---
+
+## Test 6 — LLM Failure
+
+Simulates the LLM service becoming unavailable.
+
+```text
+LLM REQUEST
+    ↓
+SERVICE UNAVAILABLE
+    ↓
+LLM FAILURE HANDLER
+    ↓
+HUMAN REVIEW
+```
+
+Result:
+
+```python
+{
+    "error": "LLM_UNAVAILABLE",
+    "status": "human_review_required",
+    "message": "The AI service is temporarily unavailable. "
+               "The request should be reviewed or retried later."
+}
+```
+
+The system fails safely instead of pretending the AI completed the request.
+
+---
+
+## Test 7 — Maximum Steps
+
+Tests protection against an agent that never reaches a final answer.
+
+```text
+STEP 1
+  ↓
+STEP 2
+  ↓
+STEP 3
+  ↓
+MAX_STEPS_REACHED
+  ↓
+STOP
+```
+
+Result:
+
+```text
+Agent stopped safely because the maximum step limit was reached.
+```
+
+This prevents uncontrolled agent loops.
+
+---
+
+## Test 8 — Fallback / Human Review
+
+Simulates an external tool failure.
+
+```text
+create_support_ticket
+        ↓
+External service failure
+        ↓
+Fallback handler
+        ↓
+human_review_required
+```
+
+Result:
+
+```python
+{
+    "error": "TOOL_FAILED",
+    "status": "human_review_required",
+    "tool": "create_support_ticket",
+    "message": "The requested action could not be completed automatically. "
+               "The failure has been recorded for human review."
+}
+```
+
+The system does not claim that the operation succeeded.
+
+---
+
+# ✅ Day 55 Test Result
+
+All eight reliability tests completed successfully:
+
+```text
+TEST 1 — INVALID ARGUMENT       ✅
+TEST 2 — ORDER NOT FOUND        ✅
+TEST 3 — TOOL TIMEOUT           ✅
+TEST 4 — TRANSIENT FAILURE      ✅
+TEST 5 — IDEMPOTENCY            ✅
+TEST 6 — LLM FAILURE            ✅
+TEST 7 — MAX STEPS              ✅
+TEST 8 — HUMAN REVIEW FALLBACK  ✅
+```
+
+Final output:
+
+```text
+============================================================
+ALL DAY 55 RELIABILITY TESTS COMPLETED
+============================================================
+```
 
 ---
 
@@ -446,18 +751,10 @@ User:
 
 > "My order ORD-1002 is delayed. Check the order and create a support ticket for customer C101."
 
-The agent can reason through multiple actions:
+The LLM can request multiple tools:
 
 ```text
 USER
- │
- ▼
-LLM
- │
- ├── get_order_status()
- │
- ▼
-Order Result
  │
  ▼
 LLM
@@ -466,6 +763,11 @@ LLM
  │
  ▼
 Ticket Result
+ │
+ ├── get_order_status()
+ │
+ ▼
+Order Result
  │
  ▼
 LLM
@@ -477,84 +779,58 @@ FINAL RESPONSE
 Example result:
 
 ```text
-Order ORD-1002 is shipped.
+Thank you for reaching out about your delayed order.
 
-A support ticket has also been created:
+Order:
+ORD-1002
 
-Ticket ID: TICKET-1001
-Customer: C101
-Status: open
+Status:
+shipped
+
+Delivery:
+2026-09-23
+
+Support Ticket:
+TICKET-1001
+
+Ticket Status:
+open
 ```
 
-The important part is that the application controls every tool execution.
+The important part is that every tool execution passes through the application.
 
 ---
 
-# ⚠️ Failure Handling
+# ⚠️ Failure Handling Strategy
 
-The agent is deliberately tested against failure cases.
+Different failures should be handled differently.
 
-### Unknown order
+| Failure               | Example                   | Handling               |
+| --------------------- | ------------------------- | ---------------------- |
+| Validation            | Missing `customer_id`     | Stop immediately       |
+| Permanent             | Order does not exist      | Stop, do not retry     |
+| Timeout               | Tool takes too long       | Retry within limit     |
+| Transient             | Temporary service failure | Retry                  |
+| Duplicate             | Same request repeated     | Idempotency protection |
+| LLM failure           | LLM unavailable           | Safe fallback          |
+| Max steps             | Agent keeps looping       | Stop safely            |
+| External tool failure | Tool service unavailable  | Human review           |
 
-```text
-ORD-9999
-     ↓
-ORDER_NOT_FOUND
-```
+This distinction is important.
 
-### Missing customer ID
+> **Not every failure should be retried.**
 
-```text
-create_support_ticket("")
-     ↓
-CUSTOMER_ID_REQUIRED
-```
+Retrying a permanent failure wastes resources.
 
-### Unknown customer
-
-```text
-C999
-     ↓
-CUSTOMER_NOT_FOUND
-```
-
-### Unauthorized tool
-
-```text
-delete_customer
-     ↓
-TOOL_NOT_ALLOWED
-```
-
-### Human rejection
-
-```text
-High-risk action
-     ↓
-Human says NO
-     ↓
-ACTION_DENIED
-```
-
-### Excessive agent steps
-
-```text
-STEP 1
-STEP 2
-STEP 3
-STEP 4
-STEP 5
-     ↓
-STOP
-```
+Retrying a transient failure can recover the operation.
 
 ---
 
 # 🧠 Agent vs Workflow
 
-One of the most important design decisions in AI automation is knowing when **not** to use an agent.
+One of the most important decisions in AI automation is knowing when **not** to use an agent.
 
-### Deterministic Workflow
+## Deterministic Workflow
 
 Use a workflow when the steps are known beforehand.
 
@@ -574,20 +850,20 @@ The application controls the path.
 
 ---
 
-### Agent
+## Agent
 
 Use an agent when the system needs to decide what information or action is required next.
 
 ```text
 Customer
- ↓
+   ↓
 LLM
- ↓
+   ↓
 What do I need?
- ├── Search customer
- ├── Check order
- ├── Create ticket
- └── Escalate
+   ├── Search customer
+   ├── Check order
+   ├── Create ticket
+   └── Escalate
 ```
 
 The LLM has limited decision-making authority.
@@ -600,23 +876,27 @@ The LLM has limited decision-making authority.
 
 > **If the system must decide the next step → consider an agent.**
 
-> **If the action is risky → add human approval.**
+> **If the action is risky or fails unexpectedly → add appropriate controls and human review.**
 
 ---
 
 # 🧰 Tech Stack
 
-| Technology          | Purpose                        |
-| ------------------- | ------------------------------ |
-| 🐍 Python           | Application and tool execution |
-| 🦙 Ollama           | Local LLM runtime              |
-| 🧠 Llama 3.2 3B     | Local language model           |
-| 🔧 Python Functions | Agent tools                    |
-| 📚 Tool Registry    | Dynamic tool selection         |
-| 🛡️ Allowlist       | Tool access control            |
-| 👤 Human Approval   | High-risk action control       |
-| 🔄 Agent Loop       | Multi-step decision cycle      |
-| 🗃️ Mock Database   | Simple local data layer        |
+| Technology          | Purpose                         |
+| ------------------- | ------------------------------- |
+| 🐍 Python           | Application and tool execution  |
+| 🦙 Ollama           | Local LLM runtime               |
+| 🧠 Llama 3.2 3B     | Local language model            |
+| 🔧 Python Functions | Agent tools                     |
+| 📚 Tool Registry    | Dynamic tool selection          |
+| 🛡️ Allowlist       | Tool access control             |
+| 🔄 Agent Loop       | Multi-step decision cycle       |
+| ✅ Validation        | Input protection                |
+| 🔁 Retry Logic      | Transient failure recovery      |
+| ⏱️ Timeout Handling | Prevent long-running operations |
+| 🔐 Idempotency      | Prevent duplicate actions       |
+| 👤 Human Review     | Safe failure escalation         |
+| 🗃️ Mock Data       | Local demonstration data        |
 
 ---
 
@@ -624,6 +904,7 @@ The LLM has limited decision-making authority.
 
 ```text
 controlled-ai-agent/
+
 │
 ├── main.py
 │
@@ -634,13 +915,13 @@ controlled-ai-agent/
 
 The implementation intentionally stays small.
 
-The goal is to understand the underlying mechanism before introducing an agent framework.
+The goal is to understand the underlying mechanism before introducing a large agent framework.
 
 ---
 
 # 🚀 Getting Started
 
-## 1. Clone the repository
+## 1. Clone the Repository
 
 ```bash
 git clone https://github.com/armaankhantech/controlled-ai-agent.git
@@ -650,7 +931,9 @@ git clone https://github.com/armaankhantech/controlled-ai-agent.git
 cd controlled-ai-agent
 ```
 
-## 2. Create a virtual environment
+---
+
+## 2. Create a Virtual Environment
 
 ### Windows
 
@@ -670,7 +953,7 @@ Activate it:
 
 Install Ollama and make sure it is running.
 
-Then pull the model:
+Pull the model:
 
 ```bash
 ollama pull llama3.2:3b
@@ -684,7 +967,7 @@ ollama list
 
 ---
 
-## 4. Install Python dependency
+## 4. Install Python Dependency
 
 ```bash
 pip install ollama
@@ -692,7 +975,7 @@ pip install ollama
 
 ---
 
-## 5. Run the agent
+## 5. Run the Agent
 
 ```bash
 python main.py
@@ -702,17 +985,29 @@ python main.py
 
 # 🎬 Example Execution
 
+A successful agent execution looks similar to:
+
 ```text
 === AGENT STEP 1 ===
 
 === LLM RESPONSE ===
 
 Tool:
-get_order_status
+create_support_ticket
 
 Arguments:
 {
-    "order_id": "ORD-1002"
+    "issue": "Order delayed",
+    "customer_id": "C101"
+}
+
+=== TOOL RESULT ===
+
+{
+    "ticket_id": "TICKET-1001",
+    "customer_id": "C101",
+    "issue": "Order delayed",
+    "status": "open"
 }
 
 === TOOL RESULT ===
@@ -725,30 +1020,35 @@ Arguments:
 
 === AGENT STEP 2 ===
 
-=== LLM RESPONSE ===
-
-The current status of order ORD-1002 is "shipped".
-
 === FINAL AI ANSWER ===
 
-The current status of order ORD-1002 is "shipped".
+The order is currently shipped and a support ticket
+has been created successfully.
 ```
 
 ---
 
 # 🔐 Design Principles
 
-This project follows several important principles for building controlled AI systems.
+## 1. LLMs Should Not Directly Control Your Backend
 
-### 1. LLMs should not directly control your backend
+The LLM produces a structured request.
 
-The LLM produces a request.
+The application executes it.
 
-Your application executes it.
+```text
+LLM
+ ↓
+Request
+ ↓
+Application
+ ↓
+Tool
+```
 
 ---
 
-### 2. Tool arguments are untrusted input
+## 2. Tool Arguments Are Untrusted Input
 
 Always validate them.
 
@@ -764,43 +1064,75 @@ Execution
 
 ---
 
-### 3. Tool access should be explicit
+## 3. Tool Access Should Be Explicit
 
 Use an allowlist instead of allowing arbitrary functions.
 
 ---
 
-### 4. High-impact actions need stronger controls
-
-Examples:
+## 4. Different Failures Need Different Responses
 
 ```text
-Read data
-    ↓
-Low risk
+Validation Failure
+      ↓
+Stop
 
-Create ticket
-    ↓
-Moderate risk
+Permanent Failure
+      ↓
+Stop
 
-Delete customer
-    ↓
-High risk
-    ↓
-Human approval
+Transient Failure
+      ↓
+Retry
+
+Timeout
+      ↓
+Bounded Retry
+
+External Failure
+      ↓
+Human Review
 ```
 
 ---
 
-### 5. Agents need boundaries
+## 5. Duplicate Actions Must Be Controlled
+
+If the same request is submitted twice, idempotency should prevent duplicate side effects.
+
+---
+
+## 6. Agents Need Boundaries
 
 Maximum steps prevent uncontrolled loops.
 
 ---
 
+## 7. Never Claim an Action Succeeded When It Failed
+
+A reliable agent must distinguish:
+
+```text
+SUCCESS
+```
+
+from:
+
+```text
+FAILED
+```
+
+and:
+
+```text
+HUMAN_REVIEW_REQUIRED
+```
+
+---
+
 # 📈 What This Project Demonstrates
 
-This project demonstrates the fundamentals behind modern AI agents:
+This project demonstrates the fundamentals behind controlled AI agents:
 
 * ✅ Tool calling
 * ✅ Structured tool arguments
@@ -811,9 +1143,13 @@ This project demonstrates the fundamentals behind modern AI agents:
 * ✅ Input validation
 * ✅ Tool allowlisting
 * ✅ Permission boundaries
-* ✅ Human-in-the-loop approval
-* ✅ Failure handling
+* ✅ Failure classification
+* ✅ Retry handling
+* ✅ Timeout handling
+* ✅ Idempotency
+* ✅ LLM failure handling
 * ✅ Maximum iteration limits
+* ✅ Human-review fallback
 * ✅ LLM/application separation
 
 ---
@@ -835,9 +1171,14 @@ Application
  │
  │ validates
  ▼
-Permission Layer
+Permission / Reliability Layer
  │
- │ approves
+ ├── Allow
+ ├── Retry
+ ├── Reject
+ ├── Stop
+ └── Escalate
+ │
  ▼
 Tool
  │
@@ -849,9 +1190,13 @@ Result
 LLM
 ```
 
-The LLM provides **reasoning and decision-making**.
+The LLM provides:
 
-The application provides **control and enforcement**.
+> **Reasoning and decision-making**
+
+The application provides:
+
+> **Control, validation, reliability, and enforcement**
 
 ---
 
@@ -863,17 +1208,15 @@ Possible future extensions include:
 * [ ] Authentication
 * [ ] Role-based permissions
 * [ ] Structured argument schemas
-* [ ] Better validation
-* [ ] Tool execution logging
-* [ ] Observability
-* [ ] Retry policies
+* [ ] Production API integrations
+* [ ] Persistent conversation memory
 * [ ] Rate limiting
-* [ ] API-based tools
-* [ ] Production database
-* [ ] Automated evaluation
+* [ ] Automated evaluation dashboard
 * [ ] Human approval dashboard
 * [ ] Web interface
-* [ ] Deployment
+* [ ] Production deployment
+* [ ] Distributed tool execution
+* [ ] Better observability and metrics
 
 ---
 
@@ -905,9 +1248,13 @@ Tool selection
  ↓
 Validation
  ↓
+Permission check
+ ↓
 Execution
  ↓
 Tool result
+ ↓
+Failure handling
  ↓
 LLM
  ↓
@@ -928,15 +1275,35 @@ They are moving toward:
 
 > **"Give an AI system controlled access to tools and let it take useful actions."**
 
-But autonomy without boundaries creates risk.
+But giving an AI system tools introduces another engineering problem:
 
-The engineering challenge is therefore not just:
+> **What happens when something goes wrong?**
 
-**"How do I make an agent?"**
+A production-minded agent needs to handle:
+
+```text
+Bad Input
+    ↓
+Temporary Failure
+    ↓
+Timeout
+    ↓
+Duplicate Request
+    ↓
+LLM Failure
+    ↓
+Runaway Loop
+    ↓
+External Service Failure
+```
+
+The engineering challenge is therefore not only:
+
+> **"How do I make an agent?"**
 
 It is:
 
-**"How do I make an agent that can act while remaining controlled?"**
+> **"How do I make an agent that can act while remaining controlled and reliable?"**
 
 ---
 
@@ -949,12 +1316,14 @@ It is:
 AI Automation • Tool Calling • AI Agents • Workflow Automation • Backend Systems
 
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Armaan%20Khan-0A66C2?style=flat-square\&logo=linkedin)](https://www.linkedin.com/in/armaankhan-tech/)
+
 [![GitHub](https://img.shields.io/badge/GitHub-armaankhantech-181717?style=flat-square\&logo=github)](https://github.com/armaankhantech)
+
 [![X](https://img.shields.io/badge/X-@armaankhantech-000000?style=flat-square\&logo=x)](https://x.com/armaankhantech)
 
 ---
 
-## ⭐ If You Found This Useful
+# ⭐ If You Found This Useful
 
 If this project helped you understand how controlled AI agents work:
 
@@ -968,4 +1337,4 @@ If this project helped you understand how controlled AI agents work:
 
 ---
 
-> **Build agents. Understand the mechanism. Add guardrails. Then scale.**
+> **Build agents. Understand the mechanism. Add guardrails. Test failure paths. Then scale.**
