@@ -1,13 +1,3 @@
-# 🤖 Controlled AI Agent
-
-> **An AI agent that can think, choose tools, execute actions, handle failures, retry safely, and stop when it reaches a safety boundary.**
-
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=for-the-badge\&logo=python)
-![Ollama](https://img.shields.io/badge/Ollama-Local%20LLM-black?style=for-the-badge)
-![Llama](https://img.shields.io/badge/Llama%203.2-3B-purple?style=for-the-badge)
-![Agent Loop](https://img.shields.io/badge/Agent-Loop-orange?style=for-the-badge)
-![Guardrails](https://img.shields.io/badge/AI-Guardrails-red?style=for-the-badge)
-![Reliability](https://img.shields.io/badge/Reliability-Tested-green?style=for-the-badge)
 
 ---
 
