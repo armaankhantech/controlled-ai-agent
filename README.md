@@ -1,3 +1,42 @@
+# 🤖 Controlled AI Agent
+
+> **An AI agent that can think, choose tools, execute actions, handle failures, retry safely, and stop when it reaches a safety boundary.**
+
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=for-the-badge\&logo=python)
+![Ollama](https://img.shields.io/badge/Ollama-Local%20LLM-black?style=for-the-badge)
+![Llama](https://img.shields.io/badge/Llama%203.2-3B-purple?style=for-the-badge)
+![Agent Loop](https://img.shields.io/badge/Agent-Loop-orange?style=for-the-badge)
+![Guardrails](https://img.shields.io/badge/AI-Guardrails-red?style=for-the-badge)
+![Reliability](https://img.shields.io/badge/Reliability-Tested-green?style=for-the-badge)
+
+---
+
+## 🧠 What Is This?
+
+This project is a **controlled AI agent built from scratch with Python and Ollama**, without using LangChain, LangGraph, CrewAI, AutoGen, or another agent framework.
+
+The goal is to understand what actually happens underneath an AI agent framework.
+
+The agent can:
+
+* 🧠 Decide which tool it needs
+* 🔧 Call registered Python tools
+* 🔄 Execute multiple tool calls in an agent loop
+* 📦 Feed tool results back into the LLM
+* 🛡️ Validate tool arguments
+* 🚦 Enforce a tool allowlist
+* 🔁 Retry transient failures
+* ⏱️ Handle tool timeouts
+* 🔐 Prevent duplicate actions with idempotency
+* 🚫 Handle permanent failures safely
+* 🤖 Handle LLM service failures
+* 🛑 Stop after a maximum number of agent steps
+* 👤 Escalate failed actions for human review
+* 💬 Generate a final natural-language response
+
+The core idea is:
+
+> **Give an LLM enough autonomy to be useful — without giving it unlimited control.**
 
 ---
 
