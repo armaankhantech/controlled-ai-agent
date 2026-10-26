@@ -10,7 +10,7 @@
 ![Reliability](https://img.shields.io/badge/Reliability-Tested-green?style=for-the-badge)
 
 ---
-
+ 
 ## 🧠 What Is This?
 
 This project is a **controlled AI agent built from scratch with Python and Ollama**, without using LangChain, LangGraph, CrewAI, AutoGen, or another agent framework.
